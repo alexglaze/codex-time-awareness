@@ -2,15 +2,22 @@
 """Give local Codex chats a clock and persistent, per-chat elapsed time."""
 
 import argparse
+from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
+import errno
 import hashlib
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
-from zoneinfo import ZoneInfo
+import time
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 
 CONTEXT_EVENTS = {"SessionStart", "UserPromptSubmit"}
@@ -31,6 +38,35 @@ def read_object(path):
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+@contextmanager
+def file_lock(path, timeout=1.0):
+    """Serialize updates on Windows and Unix, within the hook's three-second budget."""
+    with path.open("a+b") as lock:
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                if os.name == "nt":
+                    lock.seek(0)
+                    msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+                else:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError as error:
+                if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Timestamp record is busy") from error
+                time.sleep(0.025)
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def atomic_write(path, value):
@@ -69,8 +105,15 @@ def elapsed(seconds):
 
 
 def build_context(now, previous, zone_name, unavailable=False):
-    local = now.astimezone(ZoneInfo(zone_name)) if zone_name else now.astimezone()
-    zone_label = zone_name or local.tzname()
+    zone = None
+    zone_unavailable = False
+    if zone_name:
+        try:
+            zone = ZoneInfo(zone_name)
+        except ZoneInfoNotFoundError:
+            zone_unavailable = True
+    local = now.astimezone(zone)
+    zone_label = zone_name if zone else local.tzname()
     lines = [
         "Time awareness (clock sampled for this event):",
         "Current local date/time: {} ({}, {}).".format(
@@ -78,6 +121,9 @@ def build_context(now, previous, zone_name, unavailable=False):
         ),
         "Current UTC: {}.".format(now.isoformat(timespec="seconds")),
     ]
+    if zone_unavailable:
+        lines.append("Configured IANA timezone is unavailable; showing the computer's local timezone. "
+                     "Check the timezone name or install tzdata for this Python interpreter.")
     previous_activity = parse_timestamp(previous.get("last_activity_at"))
     if previous_activity:
         gap = (now - previous_activity).total_seconds()
@@ -87,7 +133,7 @@ def build_context(now, previous, zone_name, unavailable=False):
             "UserPromptSubmit": "the previous recorded message submission (not necessarily idle time)",
         }
         label = labels.get(previous.get("last_activity_event"), "the previous recorded chat event")
-        previous_local = previous_activity.astimezone(ZoneInfo(zone_name)) if zone_name else previous_activity.astimezone()
+        previous_local = previous_activity.astimezone(zone)
         lines.append("Previous chat activity: {} ({}).".format(
             previous_local.isoformat(timespec="seconds"), label
         ))
@@ -128,8 +174,7 @@ def handle(payload, state_dir, zone_name=None, now=None):
         key = hashlib.sha256(session.encode("utf-8")).hexdigest()
         try:
             state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with (state_dir / (key + ".lock")).open("a") as lock:
-                fcntl.flock(lock, fcntl.LOCK_EX)
+            with file_lock(state_dir / (key + ".lock")):
                 path = state_dir / (key + ".json")
                 previous = read_object(path)
                 turn = payload.get("turn_id")
@@ -160,7 +205,8 @@ def main():
     args = parser.parse_args()
     settings = read_object(data_directory() / "settings.json")
     try:
-        result = handle(json.load(sys.stdin), args.state_dir, args.timezone or settings.get("timezone"))
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
+        result = handle(payload, args.state_dir, args.timezone or settings.get("timezone"))
     except Exception as error:
         # An optional clock must never reject a prompt or restart an assistant turn.
         print("time-awareness: {}".format(type(error).__name__), file=sys.stderr)

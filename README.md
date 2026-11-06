@@ -6,11 +6,23 @@ This plugin adds the current date/time and elapsed time since the chat's last re
 
 ## Requirements
 
-- Local Codex desktop or CLI with lifecycle hooks enabled.
-- macOS or Linux with Python 3.9+ available as `python3`.
-- No network service, API key, or Python packages.
+- Local Codex desktop or CLI with lifecycle hooks enabled. Native Windows requires a build supporting the documented `commandWindows` hook override.
+- Python 3.9+: available as `python3` on macOS/Linux, or `python` on Windows.
+- No network service, API key, or Python packages for the default local clock.
 
-Windows and cloud-orchestrated chats are not supported by this release.
+Windows, macOS, and Linux are supported. Cloud-orchestrated chats are not supported.
+
+### Windows setup
+
+Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/windows/) with `python` available on PATH. In a new terminal, confirm `python --version` reports the installed interpreter rather than opening the Microsoft Store. Restart Codex after changing PATH so its hooks inherit the new environment.
+
+The plugin uses the Windows local timezone by default, without extra packages. If you configure an IANA timezone such as `America/New_York`, install its data for the same interpreter:
+
+```powershell
+python -m pip install tzdata
+```
+
+If named timezone data is missing, the hook still provides the computer's local clock and reports that fallback. In WSL, install and run the plugin within WSL using the Linux requirements.
 
 ## Install
 
@@ -21,7 +33,7 @@ codex plugin add time-awareness@time-awareness-community
 
 Open **Settings > Hooks** in Codex desktop, or `/hooks` in the CLI. Review and trust the four Time Awareness hooks. Reopen your chat; if the source or hooks are not listed yet, restart the app. The plugin source is named **Time Awareness** in the plugin menu.
 
-For a fixed version, add the marketplace with `--ref v0.1.0`. To update an unpinned installation later, run `codex plugin marketplace upgrade time-awareness-community`, then `codex plugin add time-awareness@time-awareness-community`. Review changed hooks if Codex requests it.
+For a fixed version, add the marketplace with `--ref v0.2.0`. To update an unpinned installation later, run `codex plugin marketplace upgrade time-awareness-community`, then `codex plugin add time-awareness@time-awareness-community`. Review changed hooks if Codex requests it.
 
 ### Install from a ZIP instead
 
@@ -31,6 +43,8 @@ Download the ZIP from [Releases](https://github.com/alexglaze/codex-time-awarene
 codex plugin marketplace add /absolute/path/to/time-awareness-plugin
 codex plugin add time-awareness@time-awareness-community
 ```
+
+On Windows, use a quoted Windows path such as `codex plugin marketplace add "C:\Tools\time-awareness-plugin"` for the first command.
 
 Trust the hooks as described above. Keep the extracted folder at that path: it is the source of the local marketplace.
 
@@ -69,7 +83,7 @@ codex plugin marketplace remove time-awareness-community
 python3 -B -m unittest discover -s tests -v
 ```
 
-Validated with Codex CLI 0.166.0-alpha.5.1: a clean marketplace installation succeeds and Codex discovers all four plugin hooks without errors. The package uses the supported `.codex-plugin/plugin.json` compatibility layout. Tests cover time gaps, DST, chat isolation, interruptions, delayed events, safe state recovery, plugin data storage, and config installation.
+The package uses the supported `.codex-plugin/plugin.json` compatibility layout. Tests cover time gaps, DST, chat isolation, interruptions, delayed events, safe state recovery, plugin data storage, config installation, process locking, Windows hook commands, Unicode paths, and operation without timezone packages. CI runs on Windows, macOS, and Linux.
 
 Current-time context from the config-only installation has also been observed in a live Codex chat. The plugin's hook registration and command execution are checked separately; every installation still requires the user's hook trust review.
 

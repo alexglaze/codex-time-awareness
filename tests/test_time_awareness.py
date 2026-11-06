@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -9,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1] / "plugins/time-awareness"
 sys.path.insert(0, str(ROOT))
-from hook import handle
+from hook import file_lock, handle
 from install import configure, install
 
 
@@ -107,13 +108,18 @@ class ClockTests(unittest.TestCase):
 class InstallTests(unittest.TestCase):
     def test_packaged_hooks_execute_with_plugin_environment(self):
         config = json.loads((ROOT / "hooks/hooks.json").read_text())
-        with tempfile.TemporaryDirectory(prefix="plugin data ' $ ") as directory:
-            env = dict(os.environ, PLUGIN_ROOT=str(ROOT), PLUGIN_DATA=directory)
-            data = Path(directory)
+        with tempfile.TemporaryDirectory(prefix="plugin path é ' $ & %PATH% ") as directory:
+            plugin = Path(directory) / "plugin"
+            plugin.mkdir()
+            shutil.copy2(ROOT / "hook.py", plugin / "hook.py")
+            data = Path(directory) / "data"
+            data.mkdir()
+            env = dict(os.environ, PLUGIN_ROOT=str(plugin), PLUGIN_DATA=str(data))
             (data / "settings.json").write_text('{"timezone": "America/New_York"}')
             for event in ("SessionStart", "UserPromptSubmit", "Stop", "SessionStart", "Interrupt"):
                 handler = config["hooks"][event][0]["hooks"][0]
-                result = subprocess.run(handler["command"], shell=True, env=env, cwd="/", text=True,
+                command = handler["commandWindows"] if os.name == "nt" else handler["command"]
+                result = subprocess.run(command, shell=True, env=env, cwd=data, text=True,
                     input=json.dumps({"hook_event_name": event, "session_id": "packaged-test", "turn_id": "1"}),
                     capture_output=True, timeout=handler["timeout"], check=True)
                 output = json.loads(result.stdout)
@@ -150,13 +156,13 @@ class InstallTests(unittest.TestCase):
         self.assertEqual(original, configure(installed, target, remove=True))
 
     def test_installed_command_runs_with_quoted_paths_and_saves_state(self):
-        with tempfile.TemporaryDirectory(prefix="clock path ' $ ") as directory:
+        with tempfile.TemporaryDirectory(prefix="clock path é ' $ & %PATH% ") as directory:
             codex_dir = Path(directory)
             summary = install(codex_dir, "America/New_York")
             config = json.loads((codex_dir / "hooks.json").read_text())
             for event in ("UserPromptSubmit", "Stop", "SessionStart", "Interrupt"):
                 command = config["hooks"][event][0]["hooks"][0]["command"]
-                result = subprocess.run(command, shell=True, cwd="/", text=True,
+                result = subprocess.run(command, shell=True, cwd=codex_dir, text=True,
                     input=json.dumps({"hook_event_name": event, "session_id": "test", "turn_id": "turn"}),
                     capture_output=True, timeout=3, check=True)
                 output = json.loads(result.stdout)
@@ -194,6 +200,58 @@ class InstallTests(unittest.TestCase):
                                 capture_output=True, timeout=3)
         self.assertEqual(0, result.returncode)
         self.assertEqual({}, json.loads(result.stdout))
+
+
+class PortabilityTests(unittest.TestCase):
+    def test_lock_excludes_another_process_then_releases(self):
+        code = (
+            "import sys; from pathlib import Path; "
+            "sys.path.insert(0, sys.argv[1]); from hook import file_lock\n"
+            "try:\n"
+            "    with file_lock(Path(sys.argv[2]), timeout=0.1): print('acquired')\n"
+            "except TimeoutError: print('busy')\n"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "test.lock"
+            command = [sys.executable, "-c", code, str(ROOT), str(path)]
+            with file_lock(path):
+                result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=True)
+                self.assertEqual("busy", result.stdout.strip())
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=True)
+            self.assertEqual("acquired", result.stdout.strip())
+
+    def test_default_clock_needs_no_timezone_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            # -S hides site packages; an empty PYTHONTZPATH hides any system IANA database.
+            env = dict(os.environ, PLUGIN_DATA=directory, PYTHONTZPATH="")
+            result = subprocess.run([sys.executable, "-S", str(ROOT / "hook.py")], env=env,
+                input=json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": "no-deps"}),
+                capture_output=True, text=True, timeout=3, check=True)
+            context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Current local date/time:", context)
+            self.assertIn("Current UTC:", context)
+            self.assertNotIn("timezone is unavailable", context)
+
+    def test_missing_iana_data_falls_back_to_local_clock(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, PLUGIN_DATA=directory, PYTHONTZPATH="")
+            result = subprocess.run([sys.executable, "-S", str(ROOT / "hook.py"),
+                                     "--timezone", "America/New_York"], env=env,
+                input=json.dumps({"hook_event_name": "SessionStart", "session_id": "no-tzdata"}),
+                capture_output=True, text=True, timeout=3, check=True)
+            context = json.loads(result.stdout)["hookSpecificOutput"]["additionalContext"]
+            self.assertIn("Current local date/time:", context)
+            self.assertIn("Configured IANA timezone is unavailable", context)
+
+    def test_utf8_input_with_optional_bom(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(os.environ, PLUGIN_DATA=directory)
+            payload = {"hook_event_name": "UserPromptSubmit", "session_id": "chat-日本語"}
+            result = subprocess.run([sys.executable, str(ROOT / "hook.py")], env=env,
+                input=json.dumps(payload, ensure_ascii=False).encode("utf-8-sig"),
+                capture_output=True, timeout=3, check=True)
+            self.assertIn("hookSpecificOutput", json.loads(result.stdout))
+            self.assertTrue(list((Path(directory) / "state").glob("*.json")))
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@
 """Install or remove the local Codex time-awareness hook registrations."""
 
 import argparse
+import base64
 from datetime import datetime, timezone
 import json
 import os
@@ -17,9 +18,19 @@ from hook import atomic_write
 EVENTS = ("SessionStart", "UserPromptSubmit", "Stop", "Interrupt")
 
 
+def windows_command(target):
+    # Encode only the path: cmd.exe expands percent variables even inside quotes.
+    # The Python bootstrap also handles spaces, apostrophes, and Unicode paths.
+    path = base64.b64encode(str(target / "hook.py").encode("utf-8")).decode("ascii")
+    code = "import base64,runpy;runpy.run_path(base64.b64decode('{}').decode('utf-8'),run_name='__main__')".format(path)
+    return 'python -c "{}"'.format(code)
+
+
 def is_ours(handler, target):
     if not isinstance(handler, dict) or handler.get("type") != "command":
         return False
+    if handler.get("command") == windows_command(target):
+        return True
     try:
         arguments = shlex.split(handler.get("command", ""))
         return len(arguments) > 1 and arguments[1] == str(target / "hook.py")
@@ -32,7 +43,7 @@ def configure(config, target, remove=False):
     hooks = config.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError("Existing hooks configuration is not an object; leaving it untouched.")
-    command = shlex.join([sys.executable, str(target / "hook.py")])
+    command = windows_command(target) if os.name == "nt" else shlex.join([sys.executable, str(target / "hook.py")])
     for event in EVENTS:
         groups = hooks.get(event, [])
         if not isinstance(groups, list):

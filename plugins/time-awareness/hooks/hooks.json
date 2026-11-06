@@ -6,6 +6,7 @@
           {
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hook.py\"",
+            "commandWindows": "python \"%PLUGIN_ROOT%\\hook.py\"",
             "timeout": 3,
             "additionalContextLimit": 600
           }
@@ -18,6 +19,7 @@
           {
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hook.py\"",
+            "commandWindows": "python \"%PLUGIN_ROOT%\\hook.py\"",
             "timeout": 3,
             "additionalContextLimit": 600
           }
@@ -30,6 +32,7 @@
           {
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hook.py\"",
+            "commandWindows": "python \"%PLUGIN_ROOT%\\hook.py\"",
             "timeout": 3
           }
         ]
@@ -41,6 +44,7 @@
           {
             "type": "command",
             "command": "python3 \"${PLUGIN_ROOT}/hook.py\"",
+            "commandWindows": "python \"%PLUGIN_ROOT%\\hook.py\"",
             "timeout": 3
           }
         ]

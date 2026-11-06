@@ -1,6 +1,6 @@
 {
   "name": "time-awareness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Give local Codex chats the current time and the elapsed time since their last recorded activity.",
   "author": {
     "name": "Alex Glaze"
