@@ -1,0 +1,23 @@
+{
+  "name": "time-awareness",
+  "version": "0.1.0",
+  "description": "Give local Codex chats the current time and the elapsed time since their last recorded activity.",
+  "author": {
+    "name": "Alex Glaze"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/alexglaze/codex-time-awareness",
+  "homepage": "https://github.com/alexglaze/codex-time-awareness#readme",
+  "keywords": [
+    "time",
+    "date",
+    "sessions",
+    "productivity"
+  ],
+  "requires_local_executor": true,
+  "interface": {
+    "displayName": "Time Awareness",
+    "shortDescription": "Know when you return to a chat"
+  },
+  "hooks": "./hooks/hooks.json"
+}
